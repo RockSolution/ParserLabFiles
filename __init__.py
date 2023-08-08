@@ -1,3 +1,4 @@
+# Powered by Tony Condor tonyk.zlt@gmail.com
 import os
 import pymssql
 import pandas as pd
@@ -5,7 +6,7 @@ import config
 import glob
 import shutil
 import logging
-from ftplib import FTP
+import pysftp
 from zipfile import ZipFile
 from datetime import datetime
 
@@ -16,6 +17,7 @@ class ParseLabFiles:
         self.conn = object
         self.cursor = object
         self.ftp = object
+        self.root_folder = ''
         self.init_logger('errors')
         self.init_logger('success')
         self.log_error = logging.getLogger('errors')
@@ -29,24 +31,27 @@ class ParseLabFiles:
             'Material_Description': 'Material_Code',
             'E_coli_O157_H7': 'E_Coli_0157_H7',
             'E_Coli_O157_H7_Cl': 'E_Coli_0157_H7_Cl',
-            'E_Coli_O157_H7': 'E_Coli_0157_H7'
+            'E_Coli_O157_H7': 'E_Coli_0157_H7',
+            'S_aureus_2': 'S_Aureus2'
         }
 
     def run(self) -> None:
         self.log_success.info('Parser started')
         self.db_connect()
         paths = self.get_lab_info()
-        self.ftp_connect()
-        # True - delete downloaded files from FTP
-        self.grab_files(paths, delete_files=False)
+
+        if config.DOWNLOAD_FROM_FTP:
+            self.ftp_connect()
+            # True - delete downloaded files from FTP
+            self.grab_files(paths, delete_files=config.DELETE_FTP_FILES)
+
         self.parse_files_to_df(paths)
         self.conn.close()
         self.log_success.info('Parsing completed')
 
     def ftp_connect(self) -> None:
         try:
-            self.ftp = FTP(config.FTP_IP)
-            self.ftp.login(user=config.FTP_USER, passwd=config.FTP_PASSWORD)
+            self.ftp = pysftp.Connection(config.FTP_IP, username=config.FTP_USER, password=config.FTP_PASSWORD)
             msg = 'FTP connected. OK!'
             print(msg)
             self.log_success.info(msg)
@@ -56,47 +61,67 @@ class ParseLabFiles:
             exit()
 
     # grab files from FTP server and save locally
-    def grab_files(self, paths: list, delete_files=False) -> None:
+    def grab_files(self, paths: dict, delete_files=False) -> None:
         file_counts = 0
-        # folders to grab
-        for lab_folder in paths:
-            # transfer to specified folder
-            self.ftp.cwd(lab_folder['FTP_Path'])
-            # get list of files
-            sublist = self.ftp.nlst()
+        # move to root parent lab folder
+        self.ftp.cwd(self.root_folder)
+
+        # get list of files
+        sublist_tmp = self.ftp.listdir()
+
+        # check if ftp folders is in lab paths
+        if len(sublist_tmp) > 0:
+            # remove folders/files from server list what we don't need to parse
+            sublist = [x for x in sublist_tmp if x.lower() in paths]
             if len(sublist) > 0:
-                # if there is no local lab folder create it
-                if not os.path.isdir(lab_folder['Folder']):
-                    os.mkdir(lab_folder['Folder'])
-                for file in sublist:
-                    ext = file.split('.')
-                    # check file extension
-                    if ext[1] == 'csv':
-                        file_download = lab_folder['Folder'] + '/' + file
+                for ftp_folder in sublist:
+                    self.ftp.cwd(ftp_folder)
+                    # list of files
+                    file_list = self.ftp.listdir()
+                    if len(file_list) > 0:
+                        file_list = [x for x in file_list if len(x.split('.')) == 2 and x.split('.')[1] == 'csv']
+                        if len(file_list) > 0:
+                            # take lab name as lab folder cause mistake lab names in DB table
+                            lab_folder = paths[ftp_folder.lower()]
+                            # if there is no local lab folder create it
+                            if not os.path.isdir(lab_folder['LabName']):
+                                os.mkdir(lab_folder['LabName'])
+                            # folders to grab
+                            for file in file_list:
+                                ext = file.split('.')
+                                # check file extension
+                                if ext[1] == 'csv':
+                                    # remove digits from file name to compare with table name
+                                    file_name_alpha = self.str_to_alpha(ext[0])
+                                    # if file in dict of table name process him
+                                    if file_name_alpha in config.TABLE_COMPARE:
+                                        file_download = lab_folder['LabName'] + '/' + file
 
-                        msg = f'Downloading FTP file {file_download}'
-                        print(msg)
-                        try:
-                            with open(file_download, 'wb') as f:
-                                self.ftp.retrbinary('RETR ' + file, f.write)
-                        except Exception as e:
-                            print(f'Error save local file - {file_download}. {e}')
-                            self.log_error.error(e)
-                        else:
-                            if delete_files:
-                                # remove downloaded file
-                                self.ftp.delete(file)
-                            msg = f'File {file_download} successfully downloaded'
-                            print(msg)
-                            self.log_success.info(msg)
-                            file_counts += 1
-            # go back to parent folder
-            self.ftp.cwd('/..')
+                                        msg = f'Downloading FTP file {file_download}'
+                                        print(msg)
+                                        try:
+                                            self.ftp.get(file, file_download, callback=None)
+                                        except Exception as e:
+                                            print(f'Error save local file - {file_download}. {e}')
+                                            self.log_error.error(e)
+                                        else:
+                                            if delete_files:
+                                                # remove downloaded file
+                                                self.ftp.remove(file)
+                                            msg = f'File {file_download} successfully downloaded'
+                                            print(msg)
+                                            self.log_success.info(msg)
+                                            file_counts += 1
+                    # go back to parent folder
+                    self.ftp.cwd('..')
 
-        self.ftp.quit()
+        self.ftp.close()
         msg = f'Downloaded {file_counts} files from FTP. Connection closed.'
         print(msg)
         self.log_success.info(msg)
+
+    def str_to_alpha(self, value: str) -> str:
+        return ''.join(filter(lambda x: not x.isdigit(), value))
 
     # setup logger
     def init_logger(self, logger_file: str) -> None:
@@ -123,8 +148,8 @@ class ParseLabFiles:
             exit()
 
     # gets folder paths
-    def get_lab_info(self) -> list:
-        paths = []
+    def get_lab_info(self) -> dict:
+        paths = {}
         # select Labs that is active in DB
         self.cursor.execute('SELECT * FROM Labs WHERE active=%s', '1')
         labs = self.cursor.fetchall()
@@ -134,12 +159,18 @@ class ParseLabFiles:
             for row in labs:
                 if row['Remote_File_Path'][-1::] == '/':
                     row['Remote_File_Path'] = row['Remote_File_Path'][:-1]
+
+                split_path = row['Remote_File_Path'].split('/')
                 # set lab name and folder to save files
-                paths.append({
-                    'LabName': row['Lab_Name'],
-                    'Folder': row['Remote_File_Path'].split('/')[-1],
-                    'FTP_Path': row['Remote_File_Path']
+                paths.update({
+                    split_path[-1].lower(): {
+                        'LabName': row['Lab_Name'],
+                        'LocalFolder': row['Lab_Name']
+                    }
                 })
+                # root entry folder for ftp
+                if self.root_folder == '':
+                    self.root_folder = split_path[-2]
         else:
             self.conn.close()
             try:
@@ -151,18 +182,20 @@ class ParseLabFiles:
         return paths
 
     # parse files in lab folders
-    def parse_files_to_df(self, paths: list) -> None:
-        for path in paths:
+    def parse_files_to_df(self, paths: dict) -> None:
+        for x in paths:
+            path = paths[x]
             # gets files in folder
-            files = [item for sublist in [glob.glob(path['Folder'] + '/' + ext) for ext in ['*.csv']] for item in sublist]
+            files = [item for sublist in [glob.glob(path['LocalFolder'] + '/' + ext) for ext in ['*.csv']] for item in sublist]
             if len(files) > 0:
                 # file by file
                 for file in files:
                     file_name, file_extension = os.path.splitext(file)
-                    table_name = file_name = file_name.split('/')[-1]
+                    table_name = self.str_to_alpha(file_name.split('/')[-1])
+                    file_name = file_name.split('/')[-1]
                     # lab name is name of folder
                     lab_name = path['LabName']
-                    lab_folder = path['Folder']
+                    lab_folder = path['LocalFolder']
                     try:
                         # read CSV files
                         df = pd.read_csv(file, sep=config.SEPARATOR, keep_default_na=False)
@@ -179,10 +212,13 @@ class ParseLabFiles:
                         df.columns = df.columns.str.replace('-', '_')
                         # change columns on correct
                         df.rename(columns=self.columns_compr, inplace=True)
-                        # insert data to db
-                        self.insert(lab_name, lab_folder, table_name, file_name + file_extension, df)
+                        if (len(df)) > 0:
+                            # insert data to db
+                            self.insert(lab_name, lab_folder, table_name, file_name + file_extension, df)
+                        else:
+                            self.process_file(False, lab_name, lab_folder, file_name + file_extension, f"Doesn't have any data.")
             else:
-                msg = f"In folder {path['Folder']} no files fo parse"
+                msg = f"In folder {path['LocalFolder']} no files fo parse"
                 print(msg)
                 self.log_success.info(msg)
 
@@ -209,7 +245,7 @@ class ParseLabFiles:
             self.cursor.executemany(insert_query, sql_data)
             # get ID inserted file
             file_id = self.cursor.lastrowid
-            # set in dataframe data about lab_name and file_id
+            # set in data frame data about lab_name and file_id
             df['Lab_Name'] = str(lab_name)
             df['FileID'] = str(file_id)
 
