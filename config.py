@@ -10,3 +10,7 @@ TABLE_COMPARE = {
 }
 FALLEN_FILES_FOLDER = "ProcessedFiles"
 PROCESSED_FILES_FOLDER = "ProcessedFiles"
+
+FTP_IP = ''
+FTP_USER = ''
+FTP_PASSWORD = ''
