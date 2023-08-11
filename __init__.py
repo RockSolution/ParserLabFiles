@@ -1,4 +1,3 @@
-# Powered by Tony Condor tonyk.zlt@gmail.com
 import os
 import pymssql
 import pandas as pd
@@ -17,7 +16,7 @@ class ParseLabFiles:
         self.conn = object
         self.cursor = object
         self.ftp = object
-        self.root_folder = ''
+        self.root_folder = '/LSstandard_tests/users'
         self.init_logger('errors')
         self.init_logger('success')
         self.log_error = logging.getLogger('errors')
@@ -62,20 +61,17 @@ class ParseLabFiles:
 
     # grab files from FTP server and save locally
     def grab_files(self, paths: dict, delete_files=False) -> None:
-        file_counts = 0
-        # move to root parent lab folder
         self.ftp.cwd(self.root_folder)
-
+        file_counts = 0
         # get list of files
         sublist_tmp = self.ftp.listdir()
-
         # check if ftp folders is in lab paths
         if len(sublist_tmp) > 0:
             # remove folders/files from server list what we don't need to parse
             sublist = [x for x in sublist_tmp if x.lower() in paths]
             if len(sublist) > 0:
                 for ftp_folder in sublist:
-                    self.ftp.cwd(ftp_folder)
+                    self.ftp.cwd(self.root_folder + '/' + ftp_folder)
                     # list of files
                     file_list = self.ftp.listdir()
                     if len(file_list) > 0:
@@ -112,9 +108,6 @@ class ParseLabFiles:
                                             print(msg)
                                             self.log_success.info(msg)
                                             file_counts += 1
-                    # go back to parent folder
-                    self.ftp.cwd('..')
-
         self.ftp.close()
         msg = f'Downloaded {file_counts} files from FTP. Connection closed.'
         print(msg)
@@ -168,9 +161,6 @@ class ParseLabFiles:
                         'LocalFolder': row['Lab_Name']
                     }
                 })
-                # root entry folder for ftp
-                if self.root_folder == '':
-                    self.root_folder = split_path[-2]
         else:
             self.conn.close()
             try:
