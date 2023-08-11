@@ -36,8 +36,8 @@ class ParseLabFiles:
 
     def run(self) -> None:
         self.log_success.info('Parser started')
-        self.db_connect()
-        paths = self.get_lab_info()
+        #self.db_connect()
+        paths = []#self.get_lab_info()
 
         if config.DOWNLOAD_FROM_FTP:
             self.ftp_connect()
@@ -65,6 +65,7 @@ class ParseLabFiles:
         file_counts = 0
         # get list of files
         sublist_tmp = self.ftp.listdir()
+        print(sublist_tmp)
         # check if ftp folders is in lab paths
         if len(sublist_tmp) > 0:
             # remove folders/files from server list what we don't need to parse
@@ -74,6 +75,8 @@ class ParseLabFiles:
                     self.ftp.cwd(self.root_folder + '/' + ftp_folder)
                     # list of files
                     file_list = self.ftp.listdir()
+                    print(file_list)
+                    exit()
                     if len(file_list) > 0:
                         file_list = [x for x in file_list if len(x.split('.')) == 2 and x.split('.')[1] == 'csv']
                         if len(file_list) > 0:
