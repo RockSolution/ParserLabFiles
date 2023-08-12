@@ -62,6 +62,7 @@ class ParseLabFiles:
     # grab files from FTP server and save locally
     def grab_files(self, paths: dict, delete_files=False) -> None:
         self.ftp.cwd(self.root_folder)
+
         file_counts = 0
         # get list of files
         sublist_tmp = self.ftp.listdir()
