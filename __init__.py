@@ -17,6 +17,8 @@ class ParseLabFiles:
         self.cursor = object
         self.ftp = object
         self.root_folder = '/LSstandard_tests/users'
+        # for windows - \\, linux - /
+        self.path_splitter = '\\'
         self.init_logger('errors')
         self.init_logger('success')
         self.log_error = logging.getLogger('errors')
@@ -36,8 +38,8 @@ class ParseLabFiles:
 
     def run(self) -> None:
         self.log_success.info('Parser started')
-        #self.db_connect()
-        paths = []#self.get_lab_info()
+        self.db_connect()
+        paths = self.get_lab_info()
 
         if config.DOWNLOAD_FROM_FTP:
             self.ftp_connect()
@@ -66,7 +68,6 @@ class ParseLabFiles:
         file_counts = 0
         # get list of files
         sublist_tmp = self.ftp.listdir()
-        print(sublist_tmp)
         # check if ftp folders is in lab paths
         if len(sublist_tmp) > 0:
             # remove folders/files from server list what we don't need to parse
@@ -76,8 +77,7 @@ class ParseLabFiles:
                     self.ftp.cwd(self.root_folder + '/' + ftp_folder)
                     # list of files
                     file_list = self.ftp.listdir()
-                    print(file_list)
-                    exit()
+
                     if len(file_list) > 0:
                         file_list = [x for x in file_list if len(x.split('.')) == 2 and x.split('.')[1] == 'csv']
                         if len(file_list) > 0:
@@ -144,6 +144,14 @@ class ParseLabFiles:
             self.log_error.error(e)
             exit()
 
+    def get_lab_info_test(self) -> dict:
+
+        paths = {}
+        paths.update({'IIEHInc'.lower(): {'LabName': 'IIEHInc', 'LocalFolder': 'IIEHInc'}})
+        paths.update({'Silliker'.lower(): {'LabName': 'Silliker', 'LocalFolder': 'Silliker'}})
+        paths.update({'FSNSTech'.lower(): {'LabName': 'FSNSTech', 'LocalFolder': 'FSNSTech'}})
+        return paths
+
     # gets folder paths
     def get_lab_info(self) -> dict:
         paths = {}
@@ -180,13 +188,14 @@ class ParseLabFiles:
         for x in paths:
             path = paths[x]
             # gets files in folder
-            files = [item for sublist in [glob.glob(path['LocalFolder'] + '/' + ext) for ext in ['*.csv']] for item in sublist]
+            files = [item for sublist in [glob.glob(path['LocalFolder'] + self.path_splitter + ext) for ext in ['*.csv']]
+                     for item in sublist]
             if len(files) > 0:
                 # file by file
                 for file in files:
                     file_name, file_extension = os.path.splitext(file)
-                    table_name = self.str_to_alpha(file_name.split('/')[-1])
-                    file_name = file_name.split('/')[-1]
+                    table_name = self.str_to_alpha(file_name.split(self.path_splitter)[-1])
+                    file_name = file_name.split(self.path_splitter)[-1]
                     # lab name is name of folder
                     lab_name = path['LabName']
                     lab_folder = path['LocalFolder']
@@ -210,7 +219,8 @@ class ParseLabFiles:
                             # insert data to db
                             self.insert(lab_name, lab_folder, table_name, file_name + file_extension, df)
                         else:
-                            self.process_file(False, lab_name, lab_folder, file_name + file_extension, f"Doesn't have any data.")
+                            self.process_file(False, lab_name, lab_folder, file_name + file_extension,
+                                              f"Doesn't have any data.")
             else:
                 msg = f"In folder {path['LocalFolder']} no files fo parse"
                 print(msg)
@@ -267,12 +277,13 @@ class ParseLabFiles:
 
     # move files to folders in case of success processing or with errors
     def process_file(self, file_ok: bool, lab_name: str, lab_folder: str, file_name: str, error=None) -> None:
-        file_time = str(datetime.now())
+        # for windows
+        file_time = str(datetime.now().replace(microsecond=0)).replace(':', '-')
         if file_ok:
             if not os.path.isdir('ProcessedFiles/' + lab_folder):
                 os.mkdir('ProcessedFiles/' + lab_folder)
 
-            zip_file_path = 'ProcessedFiles/' + lab_folder + '/' + file_time + '_' + file_name + ".zip"
+            zip_file_path = 'ProcessedFiles' + '/' + lab_folder + '/' + file_time + '_' + file_name + ".zip"
             with ZipFile(zip_file_path, 'w') as zip:
                 zip.write(lab_folder + '/' + file_name)
 
@@ -280,15 +291,16 @@ class ParseLabFiles:
             print(msg)
             self.log_success.info(msg)
         else:
-            if not os.path.isdir('FallenFiles/' + lab_folder):
-                os.mkdir('FallenFiles/' + lab_folder)
+            if not os.path.isdir('FallenFiles' + '/' + lab_folder):
+                os.mkdir('FallenFiles' + '/' + lab_folder)
 
-            fallen_file_path = 'FallenFiles/' + lab_folder + '/' + file_time + '_' + file_name
-            shutil.copy(lab_folder + '/' + file_name, fallen_file_path)
+            fallen_file_path = 'FallenFiles' + '/' + lab_folder + '/' + file_time + '_' + file_name
+            shutil.copyfile(lab_folder + '/' + file_name, fallen_file_path)
 
             msg = f"The File {file_name} from Lab {lab_name} has errors and moved to {fallen_file_path}. {error}"
             print(msg)
             self.log_error.error(msg)
+
         os.remove(lab_folder + '/' + file_name)
 
 
